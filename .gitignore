@@ -1,0 +1,39 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+
+# Virtual environment
+venv/
+.env/
+
+# Editor settings
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+
+# Python test cache
+.pytest_cache/
+*.cover
+coverage.xml
+
+# FastAPI auto-generated docs cache (if any)
+openapi.json
+
+# Uploaded files or test data (customize if needed)
+*.vcf
+data/
+uploads/
+
+# Ignore local Jupyter notebooks or output dumps
+.ipynb_checkpoints/
+*.out
