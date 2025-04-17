@@ -10,8 +10,9 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from .config import settings
 from .models import Variant, VariantCreate, AnnotationResponse
-
+logger = logging.getLogger(__name__)
 # Define Pydantic models for data validation
+"""
 class Variant(BaseModel):
     id: str  # rs ID or constructed ID if not available
     chrom: str
@@ -27,7 +28,7 @@ class VariantAnnotation(BaseModel):
     variant_id: str
     source: str
     annotations: Dict[str, Any] = Field(default_factory=dict)
-
+"""
 # Global variable to store parsed variants
 VARIANTS: Dict[str, Variant] = {}
 
@@ -232,7 +233,72 @@ class VariantAnnotator:
         except Exception as e:
             logger.error(f"Error calling VEP REST API: {str(e)}")
             return {"error": str(e)}
-    
+    async def annotate_batch_with_vep_cli(self, variants: List[VariantCreate]) -> Dict[str, Dict[str, Any]]:
+        """
+        Annotate a batch of variants using VEP CLI.
+        
+        Args:
+            variants: List of VariantCreate objects to annotate
+            
+        Return:
+            A dictionary of variant_id -> VEP annotations
+        """
+        variant_id_map = {}
+        # 1. Create temporary input VCF file
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".vcf", delete=False) as batch_input_vcf:
+            batch_input_vcf.write("##fileformat=VCFv4.2\n")
+            batch_input_vcf.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+
+            for variant in variants:
+                variant_id = f"{variant.chrom}_{variant.pos}_{variant.ref}_{variant.alt}"
+                variant_id_map[variant_id] = variant
+                batch_input_vcf.write(
+                    f"{variant.chrom}\t{variant.pos}\t.\t{variant.ref}\t{variant.alt}\t.\t.\t.\n"
+                )
+
+            input_vcf_path = batch_input_vcf.name
+
+        # 2. Create temporary output file
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".vcf", delete=False) as batch_output_vcf:
+            output_vcf_path = batch_output_vcf.name
+
+        # 3. Build VEP command
+        cmd = [
+            self.vep_script,
+            "--input_file", input_vcf_path,
+            "--output_file", output_vcf_path,
+            "--format", "vcf",
+            "--cache",
+            "--offline",
+            "--dir_cache", str(settings.VEP_DATA_DIR),
+            "--species", settings.VEP_SPECIES,
+            "--assembly", settings.VEP_ASSEMBLY,
+            "--vcf",
+            "--no_stats"
+        ]
+
+        # 4. Run VEP
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            logging.error(f"VEP batch CLI failed:\n{result.stderr}")
+            raise RuntimeError("VEP batch CLI execution failed")
+
+        # 5. Parse VEP output and extract annotations
+        annotations_by_id = {}
+        vcf_reader = vcf.Reader(filename=output_vcf_path)
+
+        for record in vcf_reader:
+            variant_id = f"{record.CHROM}_{record.POS}_{record.REF}_{record.ALT[0]}"
+            annotations_by_id[variant_id] = dict(record.INFO)
+
+        # 6. Cleanup
+        os.unlink(input_vcf_path)
+        os.unlink(output_vcf_path)
+
+        return annotations_by_id
+
+
     def _parse_vep_output(self, output: str) -> Dict[str, Any]:
         """
         Parse VEP CLI output.
